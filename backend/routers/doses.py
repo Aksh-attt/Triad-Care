@@ -4,14 +4,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from database import get_db
-from models import DoseSchedule, Medication
+from models import DoseSchedule, Medication, User
 from schemas import DoseScheduleOut, DoseConfirm, DoseReason
+from dependencies import (
+    get_current_user,
+    verify_profile_access,
+    get_profile_id_for_dose,
+)
 
 router = APIRouter()
 
 
 @router.get("/{profile_id}/today", response_model=list[DoseScheduleOut])
-async def get_today_doses(profile_id: int, db: AsyncSession = Depends(get_db)):
+async def get_today_doses(
+    profile_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await verify_profile_access(profile_id, current_user, db)
     today = datetime.date.today()
     start = datetime.datetime.combine(today, datetime.time.min)
     end = datetime.datetime.combine(today, datetime.time.max)
@@ -31,7 +41,23 @@ async def get_today_doses(profile_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/{dose_id}/confirm", response_model=DoseScheduleOut)
-async def confirm_dose(dose_id: int, body: DoseConfirm, db: AsyncSession = Depends(get_db)):
+async def confirm_dose(
+    dose_id: int,
+    body: DoseConfirm,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # Resolve real parent profile (BOLA/IDOR protection)
+    profile_id = await get_profile_id_for_dose(dose_id, db)
+    await verify_profile_access(profile_id, current_user, db)
+
+    # Permission matrix check: family members cannot confirm doses
+    if current_user.role == "family":
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden: Family members cannot confirm medication doses per permission matrix",
+        )
+
     result = await db.execute(
         select(DoseSchedule)
         .options(selectinload(DoseSchedule.medication))
@@ -41,10 +67,24 @@ async def confirm_dose(dose_id: int, body: DoseConfirm, db: AsyncSession = Depen
     if not dose:
         raise HTTPException(status_code=404, detail="Dose not found")
 
-    dose.status = "taken"
-    dose.confirmed_by_user_id = body.confirmed_by_user_id
+    # Determine confirmation method based on role and payload
+    if current_user.role == "elderly":
+        method = "patient_confirmed"
+    elif current_user.role == "caregiver":
+        method = body.confirmation_method if body.confirmation_method in ["caregiver_observed", "caregiver_reported"] else "caregiver_observed"
+    else:
+        method = "patient_confirmed"
+
+    dose.confirmation_method = method
+    if method == "caregiver_reported":
+        # Healthcare safety: caregiver-reported intake is NOT automatically marked taken
+        pass
+    else:
+        dose.status = "taken"
+
+    # Eliminate client-controlled identity: set strictly from authenticated user
+    dose.confirmed_by_user_id = current_user.id
     dose.confirmed_at = datetime.datetime.now()
-    # NEVER touches followup status per business rules
 
     await db.commit()
     await db.refresh(dose)
@@ -52,7 +92,16 @@ async def confirm_dose(dose_id: int, body: DoseConfirm, db: AsyncSession = Depen
 
 
 @router.post("/{dose_id}/reason", response_model=DoseScheduleOut)
-async def record_reason(dose_id: int, body: DoseReason, db: AsyncSession = Depends(get_db)):
+async def record_reason(
+    dose_id: int,
+    body: DoseReason,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # Resolve real parent profile (BOLA/IDOR protection)
+    profile_id = await get_profile_id_for_dose(dose_id, db)
+    await verify_profile_access(profile_id, current_user, db, allowed_roles=["elderly", "caregiver"])
+
     result = await db.execute(
         select(DoseSchedule)
         .options(selectinload(DoseSchedule.medication))
@@ -64,7 +113,8 @@ async def record_reason(dose_id: int, body: DoseReason, db: AsyncSession = Depen
 
     dose.reason_not_taken = body.reason
     dose.reason_notes = body.notes
-    dose.confirmed_by_user_id = body.confirmed_by_user_id
+    # Eliminate client-controlled identity: set strictly from authenticated user
+    dose.confirmed_by_user_id = current_user.id
     dose.confirmed_at = datetime.datetime.now()
 
     await db.commit()
@@ -73,7 +123,12 @@ async def record_reason(dose_id: int, body: DoseReason, db: AsyncSession = Depen
 
 
 @router.get("/{profile_id}/history", response_model=list[DoseScheduleOut])
-async def dose_history(profile_id: int, db: AsyncSession = Depends(get_db)):
+async def dose_history(
+    profile_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await verify_profile_access(profile_id, current_user, db)
     result = await db.execute(
         select(DoseSchedule)
         .join(Medication)

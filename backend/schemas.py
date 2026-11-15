@@ -109,6 +109,7 @@ class DoseScheduleOut(BaseModel):
     status: str
     confirmed_by_user_id: Optional[int] = None
     confirmed_at: Optional[datetime] = None
+    confirmation_method: Optional[str] = None
     reason_not_taken: Optional[str] = None
     reason_notes: Optional[str] = None
     created_at: Optional[datetime] = None
@@ -116,13 +117,14 @@ class DoseScheduleOut(BaseModel):
 
 
 class DoseConfirm(BaseModel):
-    confirmed_by_user_id: int
+    confirmed_by_user_id: Optional[int] = None
+    confirmation_method: Optional[str] = "patient_confirmed"  # patient_confirmed|caregiver_observed|caregiver_reported
 
 
 class DoseReason(BaseModel):
     reason: str
     notes: Optional[str] = None
-    confirmed_by_user_id: int
+    confirmed_by_user_id: Optional[int] = None
 
 
 # ---- Appointment ----
@@ -172,7 +174,7 @@ class NotificationOut(BaseModel):
 # ---- CaregiverFollowup ----
 class FollowupClaim(BaseModel):
     dose_schedule_id: int
-    caregiver_id: int
+    caregiver_id: Optional[int] = None
     action: str
 
 
@@ -218,7 +220,7 @@ class ChangeRequestBase(BaseModel):
     change_type: str
     proposed_details: Optional[Any] = {}
     reason: str
-    requested_by_user_id: int
+    requested_by_user_id: Optional[int] = None
 
 
 class ChangeRequestCreate(ChangeRequestBase):
@@ -227,7 +229,7 @@ class ChangeRequestCreate(ChangeRequestBase):
 
 class ChangeRequestUpdate(BaseModel):
     status: str
-    reviewed_by_user_id: int
+    reviewed_by_user_id: Optional[int] = None
 
 
 class ChangeRequestOut(BaseModel):
@@ -249,9 +251,13 @@ class ChangeRequestOut(BaseModel):
 
 # ---- Auth ----
 class LoginRequest(BaseModel):
-    passcode: str
+    username: Optional[str] = None    # name or email
+    password: Optional[str] = None    # plaintext (sent over HTTPS; never stored)
+    passcode: Optional[str] = None    # demo passcode for legacy/demo compatibility
 
 
 class LoginResponse(BaseModel):
     user: UserOut
     memberships: List[MembershipOut]
+    access_token: Optional[str] = None   # None in /me response (no new token issued)
+    csrf_token: Optional[str] = None     # None in /me response

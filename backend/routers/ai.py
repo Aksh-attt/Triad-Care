@@ -5,9 +5,10 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from database import get_db
-from models import Medication, DoseSchedule, PatientProfile, Appointment, CaregiverFollowup
+from models import Medication, DoseSchedule, PatientProfile, Appointment, CaregiverFollowup, User
 from pydantic import BaseModel
 from typing import Any, List, Optional
+from dependencies import get_current_user, verify_profile_access
 
 router = APIRouter()
 
@@ -45,6 +46,7 @@ def _demo_prescription_fallback():
 async def scan_prescription(
     image_file: Optional[UploadFile] = File(None),
     file: Optional[UploadFile] = File(None),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     upload = image_file or file
@@ -100,12 +102,17 @@ async def scan_prescription(
 
 
 @router.post("/weekly-summary/{profile_id}")
-async def weekly_summary(profile_id: int, db: AsyncSession = Depends(get_db)):
+async def weekly_summary(
+    profile_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     # Get profile
     p_result = await db.execute(select(PatientProfile).where(PatientProfile.id == profile_id))
     profile = p_result.scalars().first()
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
+    await verify_profile_access(profile_id, current_user, db)
 
     # Get last 7 days doses
     week_ago = datetime.datetime.now() - datetime.timedelta(days=7)
@@ -244,7 +251,12 @@ async def weekly_summary(profile_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/compare-prescription")
-async def compare_prescription(body: ComparePrescriptionRequest, db: AsyncSession = Depends(get_db)):
+async def compare_prescription(
+    body: ComparePrescriptionRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await verify_profile_access(body.profile_id, current_user, db)
     result = await db.execute(
         select(Medication).where(
             Medication.profile_id == body.profile_id,

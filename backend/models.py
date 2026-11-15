@@ -1,5 +1,6 @@
 from sqlalchemy import (
-    Column, Integer, String, Boolean, DateTime, Date, Text, ForeignKey, JSON, func
+    Column, Integer, String, Boolean, DateTime, Date, Text,
+    ForeignKey, JSON, func, UniqueConstraint
 )
 from sqlalchemy.orm import relationship
 from database import Base
@@ -12,15 +13,49 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
     email = Column(String, nullable=True)
-    role = Column(String, nullable=False)  # elderly/caregiver/family
-    passcode = Column(String(4), nullable=False)
+    role = Column(String, nullable=False)         # elderly/caregiver/family
+    # hashed_password replaces the plaintext passcode (dropped in migration 006)
+    hashed_password = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    is_demo = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=func.now())
 
     memberships = relationship("ProfileMembership", back_populates="user")
-    confirmed_doses = relationship("DoseSchedule", back_populates="confirmed_by_user", foreign_keys="DoseSchedule.confirmed_by_user_id")
+    refresh_tokens = relationship("RefreshToken", back_populates="user")
+    confirmed_doses = relationship(
+        "DoseSchedule", back_populates="confirmed_by_user",
+        foreign_keys="DoseSchedule.confirmed_by_user_id"
+    )
     followups = relationship("CaregiverFollowup", back_populates="caregiver")
     notifications = relationship("Notification", back_populates="user")
-    change_requests = relationship("MedicationChangeRequest", back_populates="requested_by_user", foreign_keys="MedicationChangeRequest.requested_by_user_id")
+    change_requests = relationship(
+        "MedicationChangeRequest", back_populates="requested_by_user",
+        foreign_keys="MedicationChangeRequest.requested_by_user_id"
+    )
+
+
+class RefreshToken(Base):
+    """Server-side refresh-token store (migration 002)."""
+    __tablename__ = "refresh_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    # family_id groups tokens that belong to the same login session
+    family_id = Column(String, nullable=False, index=True)
+    # SHA-256 of the opaque random token; never store the raw token
+    token_hash = Column(String, nullable=False, unique=True)
+    # ID of the token this one was created to replace
+    parent_token_id = Column(Integer, ForeignKey("refresh_tokens.id"), nullable=True)
+    # ID of the token that supersedes this one (set at rotation time)
+    replaced_by_token_id = Column(Integer, ForeignKey("refresh_tokens.id"), nullable=True)
+    expires_at = Column(DateTime, nullable=False)
+    revoked_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+    # Optional audit metadata (privacy-aware; not logged in raw form)
+    user_agent = Column(String, nullable=True)
+    ip_address = Column(String, nullable=True)
+
+    user = relationship("User", back_populates="refresh_tokens")
 
 
 class PatientProfile(Base):
@@ -36,6 +71,8 @@ class PatientProfile(Base):
     emergency_contact_name = Column(String, nullable=True)
     emergency_contact_phone = Column(String, nullable=True)
     notes = Column(Text, nullable=True)
+    # Demo profiles are isolated from real profiles
+    is_demo = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=func.now())
 
     memberships = relationship("ProfileMembership", back_populates="profile")
@@ -50,10 +87,28 @@ class ProfileMembership(Base):
     __tablename__ = "profile_memberships"
 
     id = Column(Integer, primary_key=True, index=True)
-    profile_id = Column(Integer, ForeignKey("patient_profiles.id"), nullable=False)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    profile_id = Column(
+        Integer, ForeignKey("patient_profiles.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True
+    )
+    # Role values: elderly | caregiver | family
     role = Column(String, nullable=False)
-    joined_at = Column(DateTime, default=func.now())
+    # Relationship label (e.g. "daughter", "home-nurse") – optional
+    relationship_label = Column(String, nullable=True)
+    # Status values: active | inactive | suspended
+    status = Column(String, default="active", nullable=False)
+    # Configurable fine-grained permissions (never override role-fixed rules)
+    permissions = Column(JSON, default=dict, nullable=False)
+    joined_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "profile_id", name="uq_membership_user_profile"),
+    )
 
     profile = relationship("PatientProfile", back_populates="memberships")
     user = relationship("User", back_populates="memberships")
@@ -67,8 +122,8 @@ class Medication(Base):
     name = Column(String, nullable=False)
     dosage = Column(String, nullable=False)
     unit = Column(String, nullable=False)
-    frequency = Column(String, nullable=False)  # once_daily/twice_daily/thrice_daily/as_needed
-    timing_slots = Column(JSON, default=list)  # ["morning","evening"]
+    frequency = Column(String, nullable=False)   # once_daily/twice_daily/thrice_daily/as_needed
+    timing_slots = Column(JSON, default=list)    # ["morning","evening"]
     start_date = Column(Date, nullable=False)
     end_date = Column(Date, nullable=True)
     instructions = Column(String, nullable=True)
@@ -89,15 +144,23 @@ class DoseSchedule(Base):
     id = Column(Integer, primary_key=True, index=True)
     medication_id = Column(Integer, ForeignKey("medications.id"), nullable=False)
     scheduled_time = Column(DateTime, nullable=False)
-    status = Column(String, default="pending")  # pending/taken/missed/not_confirmed
+    status = Column(String, default="pending")   # pending/taken/missed/not_confirmed
     confirmed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     confirmed_at = Column(DateTime, nullable=True)
+    # Confirmation method (migration 005):
+    #   patient_confirmed   – patient confirmed taking the dose → status=taken
+    #   caregiver_observed  – caregiver witnessed intake         → status=taken
+    #   caregiver_reported  – caregiver reports intake (unwitnessed) → NOT auto-taken
+    confirmation_method = Column(String, nullable=True)
     reason_not_taken = Column(String, nullable=True)
     reason_notes = Column(String, nullable=True)
     created_at = Column(DateTime, default=func.now())
 
     medication = relationship("Medication", back_populates="dose_schedules")
-    confirmed_by_user = relationship("User", back_populates="confirmed_doses", foreign_keys=[confirmed_by_user_id])
+    confirmed_by_user = relationship(
+        "User", back_populates="confirmed_doses",
+        foreign_keys=[confirmed_by_user_id]
+    )
     followups = relationship("CaregiverFollowup", back_populates="dose_schedule")
 
 
@@ -140,7 +203,7 @@ class CaregiverFollowup(Base):
     id = Column(Integer, primary_key=True, index=True)
     dose_schedule_id = Column(Integer, ForeignKey("dose_schedules.id"), nullable=False)
     caregiver_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    action = Column(String, nullable=False)  # calling/going_to_check/unavailable
+    action = Column(String, nullable=False)      # calling/going_to_check/unavailable
     status = Column(String, default="accepted")  # unassigned/accepted/in_progress/resolved/reassigned
     accepted_at = Column(DateTime, nullable=False)
     resolved_at = Column(DateTime, nullable=True)
@@ -178,12 +241,15 @@ class MedicationChangeRequest(Base):
     change_type = Column(String, nullable=False)  # new_medicine/dosage_change/frequency_change/discontinue
     proposed_details = Column(JSON, default=dict)
     reason = Column(Text, nullable=False)
-    status = Column(String, default="pending")  # pending/approved/rejected
+    status = Column(String, default="pending")    # pending/approved/rejected
     reviewed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     reviewed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=func.now())
 
     profile = relationship("PatientProfile", back_populates="change_requests")
-    requested_by_user = relationship("User", back_populates="change_requests", foreign_keys=[requested_by_user_id])
+    requested_by_user = relationship(
+        "User", back_populates="change_requests",
+        foreign_keys=[requested_by_user_id]
+    )
     reviewed_by_user = relationship("User", foreign_keys=[reviewed_by_user_id])
     medication = relationship("Medication", back_populates="change_requests")
