@@ -1,14 +1,29 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../store/authStore';
 import { Heart, Shield, Users, Sparkles, ArrowRight, Lock } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 
 export function LoginPage() {
-  const { login, demoLogin, loading, error } = useAuth();
+  const { user, isAuthenticated, loading, login, demoLogin, error } = useAuth();
   const [passcode, setPasscode] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  // Redirect authenticated users to their own role dashboard
+  useEffect(() => {
+    if (!loading && isAuthenticated && user) {
+      navigate(`/${user.role}`, { replace: true });
+    }
+  }, [isAuthenticated, user, loading, navigate]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-teal-600"></div>
+      </div>
+    );
+  }
 
   const handleManualLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -35,6 +50,16 @@ export function LoginPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100 flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-2xl text-center">
+        {/* Return to Landing Page */}
+        <div className="mb-4 flex justify-center">
+          <Link
+            to="/"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-500 hover:text-gray-900 transition-colors py-1 px-3 rounded-full border border-gray-200 bg-white/80 shadow-sm"
+          >
+            ← Back to Home
+          </Link>
+        </div>
+
         {/* Brand */}
         <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-teal-600 text-white shadow-lg mb-4">
           <Heart size={32} className="fill-white" />

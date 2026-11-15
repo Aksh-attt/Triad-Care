@@ -1,28 +1,40 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './store/authStore';
 import { AppLayout } from './components/layout/AppLayout';
-import { LoginPage } from './pages/LoginPage';
 
-// Elderly pages
-import { ElderlyDashboard } from './pages/elderly/ElderlyDashboard';
-import { ElderlyMedications } from './pages/elderly/ElderlyMedications';
-import { ElderlyAppointments } from './pages/elderly/ElderlyAppointments';
+// Public pages — lazy loaded
+const LandingPage = lazy(() => import('./pages/LandingPage').then(m => ({ default: m.LandingPage })));
+const LoginPage = lazy(() => import('./pages/LoginPage').then(m => ({ default: m.LoginPage })));
 
-// Caregiver pages
-import { CaregiverDashboard } from './pages/caregiver/CaregiverDashboard';
-import { CaregiverFollowups } from './pages/caregiver/CaregiverFollowups';
-import { CaregiverPatients } from './pages/caregiver/CaregiverPatients';
+// Elderly pages — lazy loaded
+const ElderlyDashboard = lazy(() => import('./pages/elderly/ElderlyDashboard').then(m => ({ default: m.ElderlyDashboard })));
+const ElderlyMedications = lazy(() => import('./pages/elderly/ElderlyMedications').then(m => ({ default: m.ElderlyMedications })));
+const ElderlyAppointments = lazy(() => import('./pages/elderly/ElderlyAppointments').then(m => ({ default: m.ElderlyAppointments })));
 
-// Family pages
-import { FamilyDashboard } from './pages/family/FamilyDashboard';
-import { FamilyMedications } from './pages/family/FamilyMedications';
-import { FamilyAppointments } from './pages/family/FamilyAppointments';
-import { FamilyChanges } from './pages/family/FamilyChanges';
+// Caregiver pages — lazy loaded
+const CaregiverDashboard = lazy(() => import('./pages/caregiver/CaregiverDashboard').then(m => ({ default: m.CaregiverDashboard })));
+const CaregiverFollowups = lazy(() => import('./pages/caregiver/CaregiverFollowups').then(m => ({ default: m.CaregiverFollowups })));
+const CaregiverPatients = lazy(() => import('./pages/caregiver/CaregiverPatients').then(m => ({ default: m.CaregiverPatients })));
 
-// Shared pages
-import { AIFeatures } from './pages/shared/AIFeatures';
-import { NotificationsPage } from './pages/shared/NotificationsPage';
+// Family pages — lazy loaded
+const FamilyDashboard = lazy(() => import('./pages/family/FamilyDashboard').then(m => ({ default: m.FamilyDashboard })));
+const FamilyMedications = lazy(() => import('./pages/family/FamilyMedications').then(m => ({ default: m.FamilyMedications })));
+const FamilyAppointments = lazy(() => import('./pages/family/FamilyAppointments').then(m => ({ default: m.FamilyAppointments })));
+const FamilyChanges = lazy(() => import('./pages/family/FamilyChanges').then(m => ({ default: m.FamilyChanges })));
+
+// Shared pages — lazy loaded
+const AIFeatures = lazy(() => import('./pages/shared/AIFeatures').then(m => ({ default: m.AIFeatures })));
+const NotificationsPage = lazy(() => import('./pages/shared/NotificationsPage').then(m => ({ default: m.NotificationsPage })));
+
+/** Full-screen loading fallback shown during code-split chunk loads */
+function PageLoader() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-[#FAF8F5]" aria-label="Loading page">
+      <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-[#405342]" />
+    </div>
+  );
+}
 
 function ProtectedRoute({
   children,
@@ -34,15 +46,11 @@ function ProtectedRoute({
   const { user, isAuthenticated, loading } = useAuth();
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-teal-600"></div>
-      </div>
-    );
+    return <PageLoader />;
   }
 
   if (!isAuthenticated || !user) {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/login" replace />;
   }
 
   if (allowedRoles && !allowedRoles.includes(user.role)) {
@@ -57,9 +65,13 @@ export function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <Routes>
+        <Suspense fallback={<PageLoader />}>
+          <Routes>
+          {/* Public Landing Page */}
+          <Route path="/" element={<LandingPage />} />
+
           {/* Public Login Route */}
-          <Route path="/" element={<LoginPage />} />
+          <Route path="/login" element={<LoginPage />} />
 
           {/* Elderly Routes */}
           <Route
@@ -167,7 +179,8 @@ export function App() {
 
           {/* Fallback */}
           <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+          </Routes>
+        </Suspense>
       </BrowserRouter>
     </AuthProvider>
   );
