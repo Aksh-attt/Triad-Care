@@ -1,0 +1,450 @@
+================================================================================
+PROJECT_CONTEXT.TXT — TRIAD CARE PLATFORM MEMORY & TECHNICAL SPECIFICATION
+================================================================================
+Generated for: Future AI Coding Agents (Antigravity, Claude, GPT, Gemini, etc.)
+Project: Triad Care (formerly CareSync) — AI-Powered Elderly Care Coordination Platform
+Repository Root: d:\catalysthackathon
+Last Updated: 2026-11-15
+
+--------------------------------------------------------------------------------
+1. PROJECT IDENTITY
+--------------------------------------------------------------------------------
+Name: Triad Care (formerly CareSync)
+Tagline: "Care that connects. Responsibility that follows."
+Description:
+An AI-powered elderly care coordination and accountability platform connecting
+elderly individuals, caregivers, and family members.
+
+Problem Statement:
+Elderly individuals often struggle with complex multi-drug regimens, forget doses,
+misplace doctor prescriptions, or feel alienated from their own healthcare decisions.
+Family members living remotely worry and cannot verify whether medications were
+actually taken. Meanwhile, professional or informal caregivers receive reminder
+pings but lack structured, accountable ways to claim responsibility for follow-ups,
+leading to the bystander effect where everyone assumes someone else is checking.
+
+Target Users:
+1. Elderly Users (Primary Patient) — e.g., Meera Sharma, 72, living with chronic
+   conditions (Type 2 Diabetes, Hypertension, Mild Arthritis). Need high contrast,
+   large touch targets, zero cognitive clutter, and sovereignty over their prescriptions.
+2. Caregivers — e.g., Riya Patel, professional or visiting caregiver. Need an action-
+   oriented queue of unconfirmed/overdue doses, simple one-touch accountability claiming,
+   and audit logging.
+3. Family Members — e.g., Arjun Sharma, son living elsewhere. Need visibility into
+   adherence trends, real-time reassurance of who is following up, and the ability
+   to propose prescription adjustments without overriding the patient.
+
+Main Differentiator:
+The "I'm handling it" Caregiver Accountability Engine. When a dose is unconfirmed
+or overdue, a caregiver explicitly claims responsibility (Calling, Going to check,
+Unavailable). The platform permanently decouples dose adherence status from
+follow-up responsibility status.
+
+
+--------------------------------------------------------------------------------
+2. ORIGINAL REQUIREMENTS
+--------------------------------------------------------------------------------
+Core Requirements:
+A. Shared Healthcare Profile & Role-Based Access:
+   - Three distinct roles: elderly, caregiver, family.
+   - Single shared patient profile accessible by authorized memberships.
+   - Demo persona login with 4-digit passcodes (1111, 2222, 3333) and instant switcher.
+
+B. Medication Management:
+   - Full CRUD: Add, edit, soft-delete medications.
+   - Dosage, unit (mg, ml, tablet, etc.), frequency (once_daily, twice_daily, etc.).
+   - Timing slots (morning, afternoon, evening, bedtime) generating daily dose schedules.
+   - Food interaction / instructions and start/end dates.
+
+C. Medication Adherence Tracking:
+   - Doses have explicit statuses: taken, missed, not_confirmed, pending.
+   - Non-responsiveness must NEVER automatically classify a dose as missed.
+   - Confirmation must store exact timestamp and user ID.
+
+D. Caregiver Accountability ("I'm handling it"):
+   - Actions: "I'm calling", "I'm going to check", "I'm unavailable".
+   - Statuses: unassigned, accepted, in_progress, resolved, reassigned.
+   - Stores caregiver ID, action, accepted_at, resolved_at, notes.
+   - Transparent live feed on Family Dashboard.
+   - CRITICAL RULE: Claiming or resolving a follow-up must NEVER mark a dose as taken.
+
+E. "Why wasn't it taken?" Reason Logging:
+   - When a dose is unconfirmed/missed, allow logging reasons: Forgot, Medicine
+     unavailable, Feeling unwell, Unsure / cannot remember, Other (with notes).
+
+F. Doctor Appointment Management:
+   - Add, edit, list, and delete doctor appointments with specialty, date/time,
+     location, and consultation notes.
+
+G. Medication Change Request & Approval Workflow:
+   - Family members proposing prescription changes create a "pending" change request.
+   - Active medications remain untouched until the elderly user approves or rejects it.
+   - Upon approval, the change is applied to active medications.
+
+H. AI Features (Google Gemini API with graceful demo fallback):
+   - AI Prescription Scanner: OCR extraction of medicine name, dosage, frequency,
+     instructions from uploaded images via Gemini Vision, with human verification table.
+   - Prescription Diffing: Compare extracted items with active patient medications.
+   - AI Weekly Healthcare Digest: Synthesize adherence metrics, missed dose reasons,
+     and appointments into compassionate plain language.
+
+I. Healthcare Safety Principles:
+   - Never recommend extra doses, stopping meds, or diagnosing conditions.
+   - Never fabricate missing prescription data or simulate AI as live API calls.
+   - Strictly separate clinical facts from AI commentary.
+
+J. UI Architecture (Section 13 Compliance):
+   - Functionality-first, clean separation of API/state/types from presentation
+     so external UI templates can be dropped in later without rebuilding backend.
+
+
+--------------------------------------------------------------------------------
+3. TECHNOLOGY STACK
+--------------------------------------------------------------------------------
+Frontend:
+- Runtime & Bundler: Vite 8.3.8, Node.js v22.13.1
+- Framework: React 19.3.1 (TypeScript ~7.0.2)
+- Routing: react-router-dom v7.18.5
+- Styling: Tailwind CSS 3.4.17 + PostCSS + Autoprefixer
+- Icons: Lucide React v1.73.0
+- Data Visualization: Recharts v3.10.1
+- HTTP Client: Axios v1.21.1
+- Date Formatting: date-fns v4.4.0
+
+Backend:
+- Runtime: Python 3.12.10
+- Web Framework: FastAPI 0.115.0 (ASGI)
+- Server: Uvicorn 0.32.0 (with watchfiles reloader)
+- ORM: SQLAlchemy 2.0.36
+- Async Driver: aiosqlite 0.20.0
+- Schema Validation: Pydantic v2.9.2 (Pydantic-settings 2.6.0)
+- Image Processing: Pillow 11.0.0
+- AI SDK: google-generativeai 0.8.3
+- Testing Framework: Pytest 9.2.0 + pytest-asyncio 1.5.0 + HTTPX 0.28.1
+
+Database:
+- SQLite (file: `backend/caresync.db`) with async session maker. Structured
+  for drop-in migration to PostgreSQL / Supabase via connection string.
+
+
+--------------------------------------------------------------------------------
+4. ACTUAL REPOSITORY ARCHITECTURE
+--------------------------------------------------------------------------------
+Directory Tree:
+d:\catalysthackathon\
+├── backend/
+│   ├── main.py                # FastAPI initialization, CORS, routers, lifespan
+│   ├── database.py            # Async engine, sessionmaker, declarative Base
+│   ├── models.py              # 10 SQLAlchemy ORM models
+│   ├── schemas.py             # Pydantic v2 schemas for requests & responses
+│   ├── seed.py                # Synthetic demo dataset initialization
+│   ├── test_caresync.py       # Comprehensive 20-test automated QA test suite
+│   ├── requirements.txt       # Backend dependencies
+│   ├── .env.example           # Backend environment template
+│   ├── caresync.db            # SQLite local database file
+│   └── routers/
+│       ├── auth.py            # GET /demo-users, POST /login
+│       ├── patients.py        # GET/PUT /{profile_id}, GET /{profile_id}/members
+│       ├── medications.py     # CRUD, GET /{profile_id}/schedule/today
+│       ├── doses.py           # GET /{profile_id}/today, POST /{id}/confirm, POST /{id}/reason
+│       ├── followups.py       # GET /{profile_id}, POST /claim, PUT /{id}
+│       ├── appointments.py    # CRUD for doctor visits
+│       ├── changes.py         # POST /{profile_id}, PUT /{change_id}/review
+│       ├── notifications.py   # GET /{profile_id}, PUT /{id}/read, PUT /{profile_id}/read-all
+│       └── ai.py              # POST /scan-prescription, /weekly-summary, /compare-prescription
+├── frontend/
+│   ├── package.json           # Scripts, dependencies
+│   ├── vite.config.ts         # Vite build configuration
+│   ├── tailwind.config.js     # Custom color tokens (navy, teal, success, warning, danger)
+│   ├── postcss.config.js      # PostCSS Tailwind integration
+│   ├── tsconfig.json          # Project TypeScript config
+│   ├── tsconfig.app.json      # App TypeScript compiler options
+│   └── src/
+│       ├── main.tsx           # React DOM root entry
+│       ├── App.tsx            # Protected role routing & AuthProvider wrapper
+│       ├── index.css          # Tailwind base/components/utilities directives
+│       ├── types/
+│       │   └── index.ts       # TypeScript interfaces matching backend models
+│       ├── store/
+│       │   └── authStore.tsx  # React Context + useReducer for auth state & demo switching
+│       ├── api/               # Decoupled Axios API services
+│       │   ├── client.ts      # Axios base instance (http://localhost:8000)
+│       │   ├── auth.ts        # getDemoUsers, login
+│       │   ├── patients.ts    # getPatient, updatePatient, getProfileMembers
+│       │   ├── medications.ts # getMedications, addMedication, updateMedication, deleteMedication
+│       │   ├── doses.ts       # getTodayDoses, confirmDose, recordDoseReason, getDoseHistory
+│       │   ├── followups.ts   # getFollowups, claimFollowup, updateFollowup
+│       │   ├── appointments.ts# getAppointments, addAppointment, updateAppointment, deleteAppointment
+│       │   ├── changes.ts     # getChangeRequests, createChangeRequest, reviewChangeRequest
+│       │   ├── notifications.ts# getNotifications, markAsRead, markAllAsRead
+│       │   └── ai.ts          # scanPrescription, getWeeklySummary, comparePrescription
+│       ├── components/
+│       │   ├── ui/            # Reusable primitives: Button, Card, Badge, Modal, StatusBadge, etc.
+│       │   ├── layout/        # AppLayout, Sidebar, TopBar (demo switcher), NotificationBell
+│       │   ├── medications/   # DoseCard, MedicationCard, MedicationForm, RecordReasonModal
+│       │   ├── followups/     # ClaimFollowupModal, FollowupCard
+│       │   ├── appointments/  # AppointmentCard, AppointmentForm
+│       │   ├── changes/       # ChangeRequestCard, ChangeRequestForm
+│       │   └── ai/            # PrescriptionScanner, WeeklySummary
+│       └── pages/
+│           ├── LoginPage.tsx  # 1-click persona launcher + 4-digit keypad
+│           ├── elderly/       # ElderlyDashboard, ElderlyMedications, ElderlyAppointments
+│           ├── caregiver/     # CaregiverDashboard, CaregiverFollowups, CaregiverPatients
+│           ├── family/        # FamilyDashboard, FamilyMedications, FamilyAppointments, FamilyChanges
+│           └── shared/        # AIFeatures, NotificationsPage
+├── .env.example               # Unified environment variables template
+├── README.md                  # Comprehensive project presentation & demo walkthrough
+├── CHANGELOG.md               # Chronological log of development and bug fixes
+├── QA_AUDIT.md                # Formal QA audit report and test evidence
+└── PROJECT_CONTEXT.txt        # This persistent project context file
+
+
+--------------------------------------------------------------------------------
+5. FEATURE IMPLEMENTATION STATUS
+--------------------------------------------------------------------------------
+1. Role-Based Access & Demo Switching:
+   Status: IMPLEMENTED AND TESTED
+   Evidence: 3 demo users (Meera Sharma, Riya Patel, Arjun Sharma) verified. Passcodes
+   1111, 2222, 3333 grant role-specific access. Top bar switcher allows one-click switching.
+
+2. Medication Management (CRUD):
+   Status: IMPLEMENTED AND TESTED
+   Evidence: Medication creation generates today's dose schedule. Soft delete deactivates
+   medication and filters it from today's active schedule. Edits update dosage/instructions.
+
+3. Medication Adherence Tracking:
+   Status: IMPLEMENTED AND TESTED
+   Evidence: Statuses (taken, not_confirmed, pending, missed). Unconfirmed doses remain
+   unconfirmed and are never automatically presumed missed. Confirming a dose records
+   timestamp and user ID.
+
+4. Caregiver Accountability ("I'm handling it"):
+   Status: IMPLEMENTED AND TESTED
+   Evidence: Caregiver claims overdue dose with action (calling, going_to_check, unavailable).
+   Follow-up status advances (accepted -> in_progress -> resolved). Verified that claiming
+   or resolving follow-up NEVER alters medication status.
+
+5. "Why wasn't it taken?" Reason Logging:
+   Status: IMPLEMENTED AND TESTED
+   Evidence: Modal allows selecting Forgot, Medicine unavailable, Feeling unwell,
+   Unsure / cannot remember, Other, plus notes. Stored in dose_schedules table.
+
+6. Family Adherence Monitoring:
+   Status: IMPLEMENTED AND TESTED
+   Evidence: FamilyDashboard displays Recharts pie chart, real-time caregiver
+   accountability status, today's schedule, and pending change requests.
+
+7. Medication Change Request & Approval Safety:
+   Status: IMPLEMENTED AND TESTED
+   Evidence: Family can propose changes. Status starts as pending. Active meds remain
+   unchanged during pending or rejected status. Approved change updates active medication.
+
+8. AI Prescription Scanner & Comparison:
+   Status: IMPLEMENTED AND TESTED
+   Evidence: Uploads image, extracts via Gemini Vision or engages demo fallback.
+   Compares with active meds to flag existing vs new. Editable review table allows
+   human verification before saving.
+
+9. AI Weekly Health Digest:
+   Status: IMPLEMENTED AND TESTED
+   Evidence: POST /api/ai/weekly-summary/1 calculates factual stats (total, taken, missed,
+   pending, not_confirmed, adherence %). Clearly differentiates facts from AI text.
+
+10. Doctor Appointment Management:
+    Status: IMPLEMENTED AND TESTED
+    Evidence: Add, edit, list, and delete appointments with doctor name, specialty,
+    date/time, location, and consultation notes.
+
+11. In-App Notifications:
+    Status: IMPLEMENTED AND TESTED
+    Evidence: Unread badge count, categorized alerts, mark individual read, mark all read.
+
+12. Automated Email Escalation / Resend:
+    Status: PARTIALLY IMPLEMENTED
+    Evidence: Local notification center works. Email skeleton structured, but live
+    external email sending is disabled by default to avoid claiming emails were sent.
+
+13. Configurable 30-minute Escalation Timer:
+    Status: PARTIALLY IMPLEMENTED
+    Evidence: Timestamps recorded on all doses and follow-ups. Automated background cron
+    escalation daemon is not active.
+
+14. Voice-Based Dose Confirmation:
+    Status: NOT IMPLEMENTED
+    Evidence: Out of scope for hackathon MVP. Planned for post-hackathon roadmap.
+
+15. Drug Interaction Engine with External Pharmacopeia:
+    Status: PARTIALLY IMPLEMENTED
+    Evidence: Compares new medications against patient's active list and displays known
+    allergies. Live RxNorm/FDA API cross-referencing is omitted for safety.
+
+
+--------------------------------------------------------------------------------
+6. CHANGES MADE DURING DEVELOPMENT
+--------------------------------------------------------------------------------
+Session 1 (Initial Setup & Swarm):
+- Initial swarm workers added to scaffold backend and frontend simultaneously.
+- Subagents encountered model quota limit (429 RESOURCE_EXHAUSTED).
+- Coordinator took over execution directly.
+
+Session 2 (Full-Stack Implementation):
+- Created FastAPI backend with 9 routers, database models, schemas, and seed script.
+- Configured Vite React 19 frontend with Tailwind CSS and Lucide icons.
+- Fixed Tailwind CSS v4 to v3.4.17 configuration with PostCSS to enable full styling.
+- Built all role-specific pages:
+  * ElderlyDashboard, ElderlyMedications, ElderlyAppointments
+  * CaregiverDashboard, CaregiverFollowups, CaregiverPatients
+  * FamilyDashboard, FamilyMedications, FamilyAppointments, FamilyChanges
+  * AIFeatures (Scanner + Digest), NotificationsPage, LoginPage.
+
+Session 3 (Bug Fixing & QA Hardening):
+- Fixed `MissingGreenlet` error on PUT /api/changes/{change_id}/review:
+  SQLAlchemy async `db.refresh()` expired eager-loaded relationships, failing during
+  Pydantic response serialization. Fixed by re-querying with explicit `selectinload()`.
+- Fixed medication deletion filtering:
+  Updated `today_schedule` and `get_today_doses` queries to filter out inactive
+  medications (`Medication.is_active == True`), ensuring deleted medicines do not linger.
+- Fixed Button component variant:
+  Added `'outline'` variant to Button component type and styles.
+- Fixed EmptyState component action prop:
+  Enhanced `EmptyStateProps` to accept `{ label, onClick }` object or `ReactNode`.
+- Fixed notification router aliases:
+  Exported `markAsRead` and `markAllAsRead` aliases in `frontend/src/api/notifications.ts`.
+- Created comprehensive 20-test automated QA test suite (`backend/test_caresync.py`).
+  All 20 tests pass with 100% success rate.
+
+
+--------------------------------------------------------------------------------
+7. CURRENT KNOWN ISSUES & LIMITATIONS
+--------------------------------------------------------------------------------
+1. Gemini Vision API Key:
+   Without `GEMINI_API_KEY` set in `backend/.env`, the AI Prescription Scanner and
+   Weekly Summary operate in simulated demo mode (`is_demo=True`). This is intentional
+   and clearly messaged to the user in the UI.
+2. Production Deployment:
+   Application currently runs locally using SQLite (`backend/caresync.db`) and Vite dev
+   server. Production deployment would require setting up a PostgreSQL instance, running
+   Alembic migrations, and building Vite into static assets served via Nginx or FastAPI.
+3. Live Email Dispatch:
+   Resend / SMTP integration is omitted to avoid claiming emails were sent when running
+   locally without credentials.
+
+
+--------------------------------------------------------------------------------
+8. HOW TO RUN THE PROJECT
+--------------------------------------------------------------------------------
+Prerequisites:
+- Python 3.10+
+- Node.js 18+ and npm
+
+Step 1: Start Backend
+  cd backend
+  pip install -r requirements.txt
+  python -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload
+  Backend runs at: http://127.0.0.1:8000
+  Swagger docs at: http://127.0.0.1:8000/docs
+
+Step 2: Start Frontend
+  cd frontend
+  npm install
+  npm run dev -- --host 127.0.0.1 --port 5173
+  Frontend runs at: http://127.0.0.1:5173
+
+Step 3: Run Automated QA Test Suite
+  cd backend
+  python -m pytest test_caresync.py -v
+
+Demo Passcodes:
+- Meera Sharma (Elderly): 1111
+- Riya Patel (Caregiver): 2222
+- Arjun Sharma (Family): 3333
+
+
+--------------------------------------------------------------------------------
+9. TESTING & INDEPENDENT QA RESULTS
+--------------------------------------------------------------------------------
+Comprehensive Test Suite Metrics:
+- Baseline Test Suite (`backend/test_caresync.py`): 20 / 20 PASSED
+- Adversarial & Security Test Suite (`backend/test_independent_qa.py`): 13 / 13 PASSED
+- Total Automated Tests: 33 / 33 PASSED (100% pass rate)
+- Total Execution Time: ~7.4 seconds
+- Dedicated Report: `INDEPENDENT_QA_REVIEW.md`
+
+Critical Healthcare Safety Verifications:
+1. Caregiver claiming follow-up NEVER marks dose as taken: VERIFIED (Both suites)
+2. Caregiver resolving follow-up NEVER marks dose as taken: VERIFIED (Both suites)
+3. Unconfirmed doses are NOT automatically marked as missed: VERIFIED (Both suites)
+4. Pending medication change does NOT affect active medications: VERIFIED (Both suites)
+5. Rejected medication change does NOT affect active medications: VERIFIED (Both suites)
+6. Approved medication change updates schedule strictly after approval: VERIFIED (Both suites)
+7. AI weekly summary reflects factual database records without hallucination: VERIFIED
+8. Unclear / demo prescription extractions require human approval: VERIFIED
+
+Independent Adversarial & Security Verifications (`test_independent_qa.py`):
+9. Passcodes redacted from demo-users and login responses: VERIFIED
+10. Family/caregivers blocked from approving medication changes (403 Forbidden): VERIFIED
+11. Double-review / replay of already-reviewed change requests blocked (400 Bad Request): VERIFIED
+12. Elderly and family blocked from claiming caregiver follow-ups (403 Forbidden): VERIFIED
+13. Invalid follow-up actions and statuses rejected (400 Bad Request): VERIFIED
+14. Follow-up claims on already-taken doses blocked (400 Bad Request): VERIFIED
+15. Prescription comparison resilient to non-dict / raw string items: VERIFIED
+16. Prescription scanner handles missing/empty uploads gracefully: VERIFIED
+17. Database persistence across backend process kill & restart: VERIFIED
+
+
+--------------------------------------------------------------------------------
+10. FUTURE DEVELOPMENT ROADMAP
+--------------------------------------------------------------------------------
+1. UI Template Replacement (Section 13):
+   When the user provides an external UI template (HTML/Tailwind UI/Shadcn), adapt
+   the visual presentation layer while preserving `/src/api`, `/src/store`, and
+   `/src/types` completely untouched.
+2. Web Speech API Voice Confirmation:
+   Enable elderly users to say "I've taken my morning pills" for voice-activated dose
+   logging.
+3. Background Escalation Worker:
+   Add a Celery or APScheduler background worker to ping caregivers after 30 minutes
+   if an overdue dose remains unassigned.
+4. Resend Email Dispatch:
+   Configure Resend API keys to send actual email summaries to family members.
+5. Google Calendar Sync:
+   Sync doctor appointments into Google Calendar via OAuth.
+
+
+--------------------------------------------------------------------------------
+11. INSTRUCTIONS FOR FUTURE AI AGENTS
+--------------------------------------------------------------------------------
+CRITICAL RULES FOR ANY AI CODING AGENT CONTINUING WORK ON TRIAD CARE:
+
+1. READ THIS DOCUMENT FIRST:
+   Read `PROJECT_CONTEXT.txt` and `README.md` before making any modifications.
+
+2. NEVER REBUILD FROM SCRATCH:
+   The application is fully functional. Do not delete files or restart scaffolding.
+
+3. PRESERVE STRICT STATE SEPARATION:
+   Never combine medication status (`dose_schedules.status`) and caregiver follow-up
+   status (`caregiver_followups.status`). Claiming or resolving a follow-up must
+   NEVER update dose status to "taken".
+
+4. PRESERVE ELDERLY SOVEREIGNTY:
+   Never allow family members or caregivers to directly modify the elderly patient's
+   active medication regimen. Any change proposed by family MUST create a pending
+   request requiring elderly patient approval.
+
+5. PRESERVE REPLACEABLE UI ARCHITECTURE:
+   Keep `/src/api/`, `/src/types/`, and `/src/store/` decoupled from UI layout and
+   styling components. If replacing the UI, swap the visual layer without modifying
+   backend endpoints or business logic contracts.
+
+6. MAINTAIN ZERO HALLUCINATION ON AI FEATURES:
+   Always check for `GEMINI_API_KEY`. If absent, gracefully return `is_demo=True` with
+   explicit UI banners. Never fabricate clinical facts or pretend live AI calls occurred.
+
+7. RUN TESTS AFTER ANY CHANGE:
+   Run `cd backend && python -m pytest test_caresync.py -v` and `cd frontend && npm run build`
+   after every session to ensure zero regressions.
+
+8. UPDATE DOCUMENTATION:
+   Update `CHANGELOG.md` and `PROJECT_CONTEXT.txt` whenever changes are committed.
+================================================================================

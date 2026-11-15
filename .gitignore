@@ -1,0 +1,54 @@
+# ==========================================
+# Triad Care — Git Ignore Rules
+# ==========================================
+
+# Environment variables & secrets
+.env
+.env.*
+*.env
+!.env.example
+!*.env.example
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Node.js dependencies & build output
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Python caches, bytecode & virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+venv/
+.venv/
+env/
+ENV/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor & OS files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
