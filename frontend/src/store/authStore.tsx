@@ -1,6 +1,14 @@
 import React, { createContext, useContext, useReducer, useEffect } from 'react';
 import type { User, PatientProfile } from '../types';
-import { login as apiLogin, getDemoUsers } from '../api/auth';
+import {
+  login as apiLogin,
+  demoLogin as apiDemoLogin,
+  getDemoUsers,
+  bootstrapCsrf,
+  refreshSession,
+  getMe,
+  logoutApi,
+} from '../api/auth';
 import { getPatient } from '../api/patients';
 
 interface AuthState {
@@ -25,7 +33,7 @@ const initialState: AuthState = {
   profileId: null,
   profile: null,
   isAuthenticated: false,
-  loading: false,
+  loading: true, // starts loading while attempting session restore
   error: null,
   demoUsers: [],
 };
@@ -43,7 +51,7 @@ function authReducer(state: AuthState, action: AuthAction): AuthState {
         error: null,
       };
     case 'LOGOUT':
-      return { ...initialState, demoUsers: state.demoUsers };
+      return { ...initialState, loading: false, demoUsers: state.demoUsers };
     case 'SET_LOADING':
       return { ...state, loading: action.payload };
     case 'SET_ERROR':
@@ -57,8 +65,9 @@ function authReducer(state: AuthState, action: AuthAction): AuthState {
 
 interface AuthContextType extends AuthState {
   login: (passcode: string) => Promise<void>;
+  demoLogin: (role: string) => Promise<void>;
   loginWithUser: (user: User, profileId: number) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -67,30 +76,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(authReducer, initialState);
 
   useEffect(() => {
-    // Load demo users on mount
+    // 1. Fetch demo users for the login picker
     getDemoUsers()
       .then((users) => dispatch({ type: 'SET_DEMO_USERS', payload: users }))
-      .catch(() => {
-        // Silently fail - demo users not critical
-      });
+      .catch(() => {});
 
-    // Restore session from localStorage (supporting triadcare keys with fallback)
-    const savedUser = localStorage.getItem('triadcare_user') || localStorage.getItem('caresync_user');
-    const savedProfileId = localStorage.getItem('triadcare_profile_id') || localStorage.getItem('caresync_profile_id');
-    if (savedUser && savedProfileId) {
-      const user = JSON.parse(savedUser) as User;
-      const profileId = parseInt(savedProfileId);
-      getPatient(profileId)
-        .then((profile) => {
-          dispatch({ type: 'LOGIN_SUCCESS', payload: { user, profileId, profile } });
-        })
-        .catch(() => {
-          localStorage.removeItem('triadcare_user');
-          localStorage.removeItem('triadcare_profile_id');
-          localStorage.removeItem('caresync_user');
-          localStorage.removeItem('caresync_profile_id');
-        });
-    }
+    // 2. Attempt secure session restoration via HttpOnly refresh cookie + CSRF bootstrap
+    const restoreSession = async () => {
+      try {
+        await bootstrapCsrf();
+        await refreshSession();
+        const meData = await getMe();
+        const user = meData.user;
+        const profile_id =
+          meData.profile_id ||
+          (meData.memberships && meData.memberships.length > 0
+            ? meData.memberships[0].profile_id
+            : 1);
+        const profile = await getPatient(profile_id);
+        dispatch({ type: 'LOGIN_SUCCESS', payload: { user, profileId: profile_id, profile } });
+      } catch {
+        // No active session or refresh expired
+        dispatch({ type: 'SET_LOADING', payload: false });
+      }
+    };
+
+    restoreSession();
   }, []);
 
   const login = async (passcode: string) => {
@@ -99,11 +110,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const data = await apiLogin(passcode);
       const user = data.user;
-      const profile_id = data.profile_id || (data.memberships && data.memberships.length > 0 ? data.memberships[0].profile_id : 1);
+      const profile_id =
+        data.profile_id ||
+        (data.memberships && data.memberships.length > 0 ? data.memberships[0].profile_id : 1);
       const profile = await getPatient(profile_id);
       dispatch({ type: 'LOGIN_SUCCESS', payload: { user, profileId: profile_id, profile } });
-      localStorage.setItem('triadcare_user', JSON.stringify(user));
-      localStorage.setItem('triadcare_profile_id', String(profile_id));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Login failed';
       dispatch({ type: 'SET_ERROR', payload: msg });
@@ -111,30 +122,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const loginWithUser = async (user: User, profileId: number) => {
+  const demoLogin = async (role: string) => {
     dispatch({ type: 'SET_LOADING', payload: true });
+    dispatch({ type: 'SET_ERROR', payload: null });
     try {
-      const profile = await getPatient(profileId);
-      dispatch({ type: 'LOGIN_SUCCESS', payload: { user, profileId, profile } });
-      localStorage.setItem('triadcare_user', JSON.stringify(user));
-      localStorage.setItem('triadcare_profile_id', String(profileId));
+      const data = await apiDemoLogin(role);
+      const user = data.user;
+      const profile_id =
+        data.profile_id ||
+        (data.memberships && data.memberships.length > 0 ? data.memberships[0].profile_id : 1);
+      const profile = await getPatient(profile_id);
+      dispatch({ type: 'LOGIN_SUCCESS', payload: { user, profileId: profile_id, profile } });
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Login failed';
+      const msg = err instanceof Error ? err.message : 'Demo login failed';
       dispatch({ type: 'SET_ERROR', payload: msg });
       throw err;
     }
   };
 
-  const logout = () => {
-    localStorage.removeItem('triadcare_user');
-    localStorage.removeItem('triadcare_profile_id');
-    localStorage.removeItem('caresync_user');
-    localStorage.removeItem('caresync_profile_id');
+  const loginWithUser = async (user: User, _profileId?: number) => {
+    // Authenticate through the backend demo-login endpoint (no hardcoded PINs or unauthenticated client state)
+    return demoLogin(user.role);
+  };
+
+  const logout = async () => {
+    try {
+      await logoutApi();
+    } catch {
+      // Ignore network errors on logout
+    }
     dispatch({ type: 'LOGOUT' });
   };
 
   return (
-    <AuthContext.Provider value={{ ...state, login, loginWithUser, logout }}>
+    <AuthContext.Provider value={{ ...state, login, demoLogin, loginWithUser, logout }}>
       {children}
     </AuthContext.Provider>
   );

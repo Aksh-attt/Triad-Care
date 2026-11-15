@@ -5,7 +5,7 @@ import { Heart, Shield, Users, Sparkles, ArrowRight, Lock } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 
 export function LoginPage() {
-  const { demoUsers, login, loginWithUser, loading, error } = useAuth();
+  const { login, demoLogin, loading, error } = useAuth();
   const [passcode, setPasscode] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
   const navigate = useNavigate();
@@ -16,23 +16,19 @@ export function LoginPage() {
     setLocalError(null);
     try {
       await login(passcode);
-      // Determine where to redirect based on passcode
-      if (passcode === '1111') navigate('/elderly');
-      else if (passcode === '2222') navigate('/caregiver');
-      else if (passcode === '3333') navigate('/family');
-      else navigate('/elderly');
+      navigate('/elderly');
     } catch (err: unknown) {
-      setLocalError(err instanceof Error ? err.message : 'Invalid passcode');
+      setLocalError(err instanceof Error ? err.message : 'Invalid credentials');
     }
   };
 
-  const handleQuickDemo = async (role: string, defaultPasscode: string) => {
+  const handleQuickDemo = async (role: string) => {
     setLocalError(null);
     try {
-      await login(defaultPasscode);
+      await demoLogin(role);
       navigate(`/${role}`);
     } catch (err: unknown) {
-      setLocalError(err instanceof Error ? err.message : 'Quick login failed');
+      setLocalError(err instanceof Error ? err.message : 'Demo login failed');
     }
   };
 
@@ -96,9 +92,9 @@ export function LoginPage() {
                   variant="primary"
                   className="w-full bg-purple-600 hover:bg-purple-700 text-xs py-2.5"
                   loading={loading}
-                  onClick={() => handleQuickDemo('elderly', '1111')}
+                  onClick={() => handleQuickDemo('elderly')}
                 >
-                  Enter as Meera (1111) <ArrowRight size={14} className="ml-1" />
+                  Enter as Meera <ArrowRight size={14} className="ml-1" />
                 </Button>
               </div>
             </div>
@@ -128,9 +124,9 @@ export function LoginPage() {
                   variant="primary"
                   className="w-full bg-teal-600 hover:bg-teal-700 text-xs py-2.5"
                   loading={loading}
-                  onClick={() => handleQuickDemo('caregiver', '2222')}
+                  onClick={() => handleQuickDemo('caregiver')}
                 >
-                  Enter as Riya (2222) <ArrowRight size={14} className="ml-1" />
+                  Enter as Riya <ArrowRight size={14} className="ml-1" />
                 </Button>
               </div>
             </div>
@@ -160,9 +156,9 @@ export function LoginPage() {
                   variant="primary"
                   className="w-full bg-blue-600 hover:bg-blue-700 text-xs py-2.5"
                   loading={loading}
-                  onClick={() => handleQuickDemo('family', '3333')}
+                  onClick={() => handleQuickDemo('family')}
                 >
-                  Enter as Arjun (3333) <ArrowRight size={14} className="ml-1" />
+                  Enter as Arjun <ArrowRight size={14} className="ml-1" />
                 </Button>
               </div>
             </div>
@@ -175,11 +171,8 @@ export function LoginPage() {
             <div className="text-center">
               <h3 className="text-sm font-bold text-gray-900 flex items-center justify-center gap-1.5">
                 <Lock size={14} className="text-gray-500" />
-                <span>Or Enter 4-Digit Passcode</span>
+                <span>Enter Passcode or Password</span>
               </h3>
-              <p className="text-xs text-gray-400 mt-0.5">
-                Meera: 1111 · Riya: 2222 · Arjun: 3333
-              </p>
             </div>
 
             <div className="flex gap-2">

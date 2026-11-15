@@ -6,12 +6,22 @@ from sqlalchemy.orm import selectinload
 from database import get_db
 from models import MedicationChangeRequest, Medication, User
 from schemas import ChangeRequestCreate, ChangeRequestUpdate, ChangeRequestOut
+from dependencies import (
+    get_current_user,
+    verify_profile_access,
+    get_profile_id_for_change,
+)
 
 router = APIRouter()
 
 
 @router.get("/{profile_id}", response_model=list[ChangeRequestOut])
-async def list_changes(profile_id: int, db: AsyncSession = Depends(get_db)):
+async def list_changes(
+    profile_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await verify_profile_access(profile_id, current_user, db)
     result = await db.execute(
         select(MedicationChangeRequest)
         .options(
@@ -25,10 +35,34 @@ async def list_changes(profile_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/{profile_id}", response_model=ChangeRequestOut)
-async def create_change(profile_id: int, body: ChangeRequestCreate, db: AsyncSession = Depends(get_db)):
+async def create_change(
+    profile_id: int,
+    body: ChangeRequestCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # Any member of the care circle can propose changes
+    await verify_profile_access(profile_id, current_user, db)
+
+    # Cross-profile ownership validation: Medication must belong to this patient profile
+    if body.medication_id is not None:
+        med_res = await db.execute(select(Medication).where(Medication.id == body.medication_id))
+        med = med_res.scalars().first()
+        if not med:
+            raise HTTPException(status_code=404, detail="Medication not found")
+        if med.profile_id != profile_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Medication does not belong to this patient profile",
+            )
+
+    data = body.model_dump()
+    # Eliminate client-controlled identity: set strictly from authenticated user
+    data["requested_by_user_id"] = current_user.id
+
     req = MedicationChangeRequest(
         profile_id=profile_id,
-        **body.model_dump()
+        **data,
     )
     db.add(req)
     await db.commit()
@@ -47,16 +81,21 @@ async def create_change(profile_id: int, body: ChangeRequestCreate, db: AsyncSes
 
 @router.put("/{change_id}", response_model=ChangeRequestOut)
 @router.put("/{change_id}/review", response_model=ChangeRequestOut)
-async def review_change(change_id: int, body: ChangeRequestUpdate, db: AsyncSession = Depends(get_db)):
+async def review_change(
+    change_id: int,
+    body: ChangeRequestUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     if body.status not in ["approved", "rejected"]:
         raise HTTPException(status_code=400, detail="Invalid status: must be 'approved' or 'rejected'")
 
-    # Role enforcement: Verify reviewer exists and is the elderly patient
-    u_res = await db.execute(select(User).where(User.id == body.reviewed_by_user_id))
-    user = u_res.scalars().first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Reviewing user not found")
-    if user.role != "elderly":
+    # Resolve real parent profile (BOLA/IDOR protection)
+    profile_id = await get_profile_id_for_change(change_id, db)
+
+    # Role enforcement: Only the elderly patient for this profile can review changes
+    await verify_profile_access(profile_id, current_user, db, allowed_roles=["elderly"])
+    if current_user.role != "elderly":
         raise HTTPException(
             status_code=403,
             detail="Forbidden: Only the elderly patient can approve or reject medication changes per clinical safety policy",
@@ -78,8 +117,19 @@ async def review_change(change_id: int, body: ChangeRequestUpdate, db: AsyncSess
         raise HTTPException(status_code=400, detail=f"Cannot review change request: already {req.status}")
 
     req.status = body.status
-    req.reviewed_by_user_id = body.reviewed_by_user_id
+    # Eliminate client-controlled identity: set strictly from authenticated user
+    req.reviewed_by_user_id = current_user.id
     req.reviewed_at = datetime.datetime.now()
+
+    # If approved, verify medication ownership again before applying change
+    if body.status == "approved" and req.medication_id is not None:
+        m_res = await db.execute(select(Medication).where(Medication.id == req.medication_id))
+        med = m_res.scalars().first()
+        if not med or med.profile_id != req.profile_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Security violation: Medication does not belong to this patient profile",
+            )
 
     # If approved, apply change to medication
     if body.status == "approved" and req.proposed_details:
@@ -110,7 +160,7 @@ async def review_change(change_id: int, body: ChangeRequestUpdate, db: AsyncSess
                 start_date=datetime.date.today(),
                 instructions=details.get("instructions", ""),
                 is_active=True,
-                added_by_user_id=req.requested_by_user_id,
+                added_by_user_id=current_user.id,
             )
             db.add(new_med)
 

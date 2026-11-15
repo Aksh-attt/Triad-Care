@@ -6,6 +6,7 @@ from models import (
     DoseSchedule, Appointment, Notification, CaregiverFollowup,
     MedicationChangeRequest
 )
+from auth_utils import hash_password
 
 
 async def seed_database(db: AsyncSession):
@@ -18,20 +19,24 @@ async def seed_database(db: AsyncSession):
     today = datetime.date.today()
     now = datetime.datetime.now()
 
-    # Users
+    # Users – hashed_password used instead of plaintext passcode
     users = [
-        User(id=1, name="Meera Sharma", role="elderly", passcode="1111"),
-        User(id=2, name="Riya Patel", role="caregiver", passcode="2222"),
-        User(id=3, name="Arjun Sharma", role="family", passcode="3333"),
+        User(id=1, name="Meera Sharma", role="elderly",
+             hashed_password=hash_password("1111"), is_demo=True, is_active=True),
+        User(id=2, name="Riya Patel", role="caregiver",
+             hashed_password=hash_password("2222"), is_demo=True, is_active=True),
+        User(id=3, name="Arjun Sharma", role="family",
+             hashed_password=hash_password("3333"), is_demo=True, is_active=True),
     ]
     db.add_all(users)
     await db.flush()
 
-    # Patient Profile
+    # Patient Profile – explicitly marked as is_demo=True for demo isolation
     profile = PatientProfile(
         id=1,
         name="Meera Sharma",
         age=72,
+        is_demo=True,
         medical_conditions=["Type 2 Diabetes", "Hypertension", "Mild Arthritis"],
         allergies=["Penicillin"],
         primary_doctor="Dr. Priya Nair",
@@ -43,9 +48,9 @@ async def seed_database(db: AsyncSession):
 
     # Memberships
     memberships = [
-        ProfileMembership(profile_id=1, user_id=1, role="elderly"),
-        ProfileMembership(profile_id=1, user_id=2, role="caregiver"),
-        ProfileMembership(profile_id=1, user_id=3, role="family"),
+        ProfileMembership(profile_id=1, user_id=1, role="elderly", status="active", permissions={}),
+        ProfileMembership(profile_id=1, user_id=2, role="caregiver", status="active", permissions={}),
+        ProfileMembership(profile_id=1, user_id=3, role="family", status="active", permissions={}),
     ]
     db.add_all(memberships)
     await db.flush()

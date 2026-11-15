@@ -4,26 +4,46 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from database import get_db
-from models import Medication, DoseSchedule
+from models import Medication, DoseSchedule, User
 from schemas import MedicationCreate, MedicationUpdate, MedicationOut, DoseScheduleOut
+from dependencies import (
+    get_current_user,
+    verify_profile_access,
+    get_profile_id_for_medication,
+)
 
 router = APIRouter()
 
 
 @router.get("/{profile_id}", response_model=list[MedicationOut])
-async def list_medications(profile_id: int, db: AsyncSession = Depends(get_db)):
+async def list_medications(
+    profile_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await verify_profile_access(profile_id, current_user, db)
     result = await db.execute(
         select(Medication).where(
             Medication.profile_id == profile_id,
-            Medication.is_active == True
+            Medication.is_active == True,
         )
     )
     return result.scalars().all()
 
 
 @router.post("/{profile_id}", response_model=MedicationOut)
-async def add_medication(profile_id: int, body: MedicationCreate, db: AsyncSession = Depends(get_db)):
-    med = Medication(profile_id=profile_id, **body.model_dump())
+async def add_medication(
+    profile_id: int,
+    body: MedicationCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # Medication sovereignty: only elderly patient can directly add active medications
+    await verify_profile_access(profile_id, current_user, db, allowed_roles=["elderly"])
+    data = body.model_dump()
+    data["added_by_user_id"] = current_user.id
+
+    med = Medication(profile_id=profile_id, **data)
     db.add(med)
     await db.commit()
     await db.refresh(med)
@@ -53,7 +73,16 @@ async def add_medication(profile_id: int, body: MedicationCreate, db: AsyncSessi
 
 
 @router.put("/{medication_id}", response_model=MedicationOut)
-async def update_medication(medication_id: int, body: MedicationUpdate, db: AsyncSession = Depends(get_db)):
+async def update_medication(
+    medication_id: int,
+    body: MedicationUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # Resolve real parent profile (BOLA/IDOR protection)
+    profile_id = await get_profile_id_for_medication(medication_id, db)
+    await verify_profile_access(profile_id, current_user, db, allowed_roles=["elderly"])
+
     result = await db.execute(select(Medication).where(Medication.id == medication_id))
     med = result.scalars().first()
     if not med:
@@ -68,7 +97,15 @@ async def update_medication(medication_id: int, body: MedicationUpdate, db: Asyn
 
 
 @router.delete("/{medication_id}")
-async def delete_medication(medication_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_medication(
+    medication_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # Resolve real parent profile (BOLA/IDOR protection)
+    profile_id = await get_profile_id_for_medication(medication_id, db)
+    await verify_profile_access(profile_id, current_user, db, allowed_roles=["elderly"])
+
     result = await db.execute(select(Medication).where(Medication.id == medication_id))
     med = result.scalars().first()
     if not med:
@@ -79,7 +116,12 @@ async def delete_medication(medication_id: int, db: AsyncSession = Depends(get_d
 
 
 @router.get("/{profile_id}/schedule/today", response_model=list[DoseScheduleOut])
-async def today_schedule(profile_id: int, db: AsyncSession = Depends(get_db)):
+async def today_schedule(
+    profile_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await verify_profile_access(profile_id, current_user, db)
     today = datetime.date.today()
     start = datetime.datetime.combine(today, datetime.time.min)
     end = datetime.datetime.combine(today, datetime.time.max)

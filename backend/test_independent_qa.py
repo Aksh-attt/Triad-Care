@@ -7,12 +7,65 @@ import pytest
 import httpx
 import datetime
 
-BASE_URL = "http://127.0.0.1:8000"
+from fastapi.testclient import TestClient
+from main import app
+from auth_utils import create_access_token
+
+
+class AuthTestClient:
+    def __init__(self, app):
+        self.base_client = TestClient(app)
+        self.tokens = {
+            1: create_access_token(user_id=1),
+            2: create_access_token(user_id=2),
+            3: create_access_token(user_id=3),
+        }
+
+    def _get_token_for_kwargs(self, url, kwargs):
+        headers = dict(kwargs.get("headers") or {})
+        if "Authorization" in headers:
+            return
+        json_data = kwargs.get("json") or {}
+        uid = 1
+        if isinstance(json_data, dict):
+            if "caregiver_id" in json_data and json_data["caregiver_id"] in self.tokens:
+                uid = json_data["caregiver_id"]
+            elif "reviewed_by_user_id" in json_data and json_data["reviewed_by_user_id"] in self.tokens:
+                uid = json_data["reviewed_by_user_id"]
+            elif "requested_by_user_id" in json_data and json_data["requested_by_user_id"] in self.tokens:
+                uid = json_data["requested_by_user_id"]
+            elif "confirmed_by_user_id" in json_data and json_data["confirmed_by_user_id"] in self.tokens:
+                uid = json_data["confirmed_by_user_id"]
+            elif "/api/followups" in url:
+                uid = 2
+        elif "/api/followups" in url:
+            uid = 2
+        headers["Authorization"] = f"Bearer {self.tokens[uid]}"
+        kwargs["headers"] = headers
+
+    def get(self, url, **kwargs):
+        self._get_token_for_kwargs(url, kwargs)
+        return self.base_client.get(url, **kwargs)
+
+    def post(self, url, **kwargs):
+        self._get_token_for_kwargs(url, kwargs)
+        return self.base_client.post(url, **kwargs)
+
+    def put(self, url, **kwargs):
+        self._get_token_for_kwargs(url, kwargs)
+        return self.base_client.put(url, **kwargs)
+
+    def delete(self, url, **kwargs):
+        self._get_token_for_kwargs(url, kwargs)
+        return self.base_client.delete(url, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self.base_client, name)
 
 
 @pytest.fixture
 def client():
-    return httpx.Client(base_url=BASE_URL, timeout=10.0)
+    return AuthTestClient(app)
 
 
 # =========================================================================
