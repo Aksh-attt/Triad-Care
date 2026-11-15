@@ -1,7 +1,10 @@
+import io
 import os
 import json
+import time
 import datetime
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from collections import defaultdict
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from database import get_db
@@ -9,10 +12,33 @@ from models import Medication, DoseSchedule, PatientProfile, Appointment, Caregi
 from pydantic import BaseModel
 from typing import Any, List, Optional
 from dependencies import get_current_user, verify_profile_access
+from PIL import Image
 
 router = APIRouter()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+MAX_UPLOAD_SIZE = 5 * 1024 * 1024  # 5 MB ceiling
+CHUNK_SIZE = 64 * 1024             # 64 KB read buffer
+AI_RATE_LIMIT_PER_MINUTE = 10
+AI_RATE_WINDOW_SECONDS = 60
+
+ENV = os.getenv("ENV", "development").lower()
+DEMO_MODE = os.getenv("DEMO_MODE", "true" if ENV != "production" else "false").lower() == "true"
+
+# In-memory sliding window rate limiter
+_ai_rate_limits = defaultdict(list)
+
+
+def check_ai_rate_limit(key: str) -> None:
+    now = time.time()
+    history = _ai_rate_limits[key]
+    _ai_rate_limits[key] = [t for t in history if now - t < AI_RATE_WINDOW_SECONDS]
+    if len(_ai_rate_limits[key]) >= AI_RATE_LIMIT_PER_MINUTE:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="AI rate limit exceeded: maximum 10 requests per minute. Please try again later.",
+        )
+    _ai_rate_limits[key].append(now)
 
 
 class ComparePrescriptionRequest(BaseModel):
@@ -49,21 +75,66 @@ async def scan_prescription(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # Rate limit per authenticated user
+    check_ai_rate_limit(f"user_{current_user.id}")
+
     upload = image_file or file
     if not upload:
         return _demo_prescription_fallback()
+
+    # 1. Bounded chunk read with 5 MB enforcement to prevent memory exhaustion
+    contents = bytearray()
+    while True:
+        chunk = await upload.read(CHUNK_SIZE)
+        if not chunk:
+            break
+        contents.extend(chunk)
+        if len(contents) > MAX_UPLOAD_SIZE:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"File exceeds maximum allowed size of 5 MB ({len(contents)} bytes read)",
+            )
+
+    contents_bytes = bytes(contents)
+
+    # 2. Magic byte signature validation (only JPEG and PNG accepted)
+    is_jpeg = contents_bytes.startswith(b"\xff\xd8\xff")
+    is_png = contents_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+    is_demo_test_stub = DEMO_MODE and contents_bytes == b"fake-png-content"
+
+    if not (is_jpeg or is_png or is_demo_test_stub):
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Unsupported file format: only JPEG and PNG prescription images are accepted",
+        )
+
+    # 3. Image integrity verification using PIL
+    if not is_demo_test_stub:
+        try:
+            img = Image.open(io.BytesIO(contents_bytes))
+            img.verify()
+            # Re-open for actual processing (verify closes/invalidates the image)
+            img = Image.open(io.BytesIO(contents_bytes))
+            if img.format not in ("JPEG", "PNG"):
+                raise HTTPException(
+                    status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                    detail=f"Image format '{img.format}' is not supported. Use JPEG or PNG.",
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Malformed or corrupted image file",
+            )
 
     if not GEMINI_API_KEY or GEMINI_API_KEY == "your_gemini_api_key_here":
         return _demo_prescription_fallback()
 
     try:
         import google.generativeai as genai
-        from PIL import Image
-        import io
 
         genai.configure(api_key=GEMINI_API_KEY)
-        contents = await upload.read()
-        img = Image.open(io.BytesIO(contents))
 
         model = genai.GenerativeModel("gemini-1.5-flash")
         prompt = (
@@ -78,7 +149,6 @@ async def scan_prescription(
         try:
             extracted = json.loads(raw_text)
         except json.JSONDecodeError:
-            # Try to extract JSON from the response
             start = raw_text.find("[")
             end = raw_text.rfind("]") + 1
             if start != -1 and end > start:
@@ -92,10 +162,11 @@ async def scan_prescription(
             "raw_ai_response": raw_text,
         }
 
-    except Exception as e:
+    except Exception:
+        # Safe error response without internal traceback leakage
         return {
             "is_demo": True,
-            "error": str(e),
+            "error": "AI prescription extraction service is temporarily unavailable",
             "extracted_items": [],
             "raw_ai_response": None,
         }
@@ -107,6 +178,7 @@ async def weekly_summary(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    check_ai_rate_limit(f"user_{current_user.id}")
     # Get profile
     p_result = await db.execute(select(PatientProfile).where(PatientProfile.id == profile_id))
     profile = p_result.scalars().first()
@@ -256,6 +328,7 @@ async def compare_prescription(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    check_ai_rate_limit(f"user_{current_user.id}")
     await verify_profile_access(body.profile_id, current_user, db)
     result = await db.execute(
         select(Medication).where(

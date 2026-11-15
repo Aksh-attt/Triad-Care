@@ -182,7 +182,7 @@ class FollowupUpdate(BaseModel):
     status: Optional[str] = None
     notes: Optional[str] = None
     action: Optional[str] = None
-    resolved_at: Optional[datetime] = None
+    # Note: resolved_at is strictly generated on the server, never accepted from client
 
 
 class FollowupOut(BaseModel):

@@ -44,16 +44,20 @@ class RefreshToken(Base):
     family_id = Column(String, nullable=False, index=True)
     # SHA-256 of the opaque random token; never store the raw token
     token_hash = Column(String, nullable=False, unique=True)
-    # ID of the token this one was created to replace
-    parent_token_id = Column(Integer, ForeignKey("refresh_tokens.id"), nullable=True)
+    # ID of the token this one was created to replace (strictly one successor per parent)
+    parent_token_id = Column(Integer, ForeignKey("refresh_tokens.id", ondelete="SET NULL"), nullable=True)
     # ID of the token that supersedes this one (set at rotation time)
-    replaced_by_token_id = Column(Integer, ForeignKey("refresh_tokens.id"), nullable=True)
+    replaced_by_token_id = Column(Integer, ForeignKey("refresh_tokens.id", ondelete="SET NULL"), nullable=True)
     expires_at = Column(DateTime, nullable=False)
     revoked_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=func.now())
     # Optional audit metadata (privacy-aware; not logged in raw form)
     user_agent = Column(String, nullable=True)
     ip_address = Column(String, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("parent_token_id", name="uq_refresh_tokens_parent_token_id"),
+    )
 
     user = relationship("User", back_populates="refresh_tokens")
 

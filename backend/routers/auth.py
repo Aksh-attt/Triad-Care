@@ -43,8 +43,9 @@ class DemoLoginRequest(BaseModel):
 
 router = APIRouter()
 
-DEMO_MODE: bool = os.getenv("DEMO_MODE", "false").lower() == "true"
-SECURE_COOKIE: bool = os.getenv("ENV", "development").lower() == "production"
+ENV: str = os.getenv("ENV", "development").lower()
+DEMO_MODE: bool = os.getenv("DEMO_MODE", "true" if ENV != "production" else "false").lower() == "true"
+SECURE_COOKIE: bool = ENV == "production"
 REFRESH_COOKIE_NAME = "refresh_token"
 CSRF_COOKIE_NAME = "csrf_token"
 
@@ -165,6 +166,13 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is inactive")
 
+    # Demo account isolation: Normal login rejects demo accounts when DEMO_MODE is false
+    if user.is_demo and not DEMO_MODE:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Demo accounts are disabled when demo mode is not active",
+        )
+
     return await _build_login_response(user, db, response)
 
 
@@ -228,8 +236,22 @@ async def refresh_tokens(
     if rt.expires_at.replace(tzinfo=timezone.utc) < now:
         raise invalid_exc
 
-    # Revoke old token and create single successor in one transaction
-    rt.revoked_at = now
+    # Atomic rotation attempt: atomically mark the token as revoked
+    from sqlalchemy import update
+    stmt = (
+        update(RefreshToken)
+        .where(RefreshToken.id == rt.id, RefreshToken.revoked_at == None)  # noqa: E711
+        .values(revoked_at=now)
+    )
+    update_res = await db.execute(stmt)
+    if update_res.rowcount == 0:
+        # Concurrent request already revoked/rotated this token: replay detected!
+        await _revoke_family(rt.family_id, db)
+        _clear_auth_cookies(response)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token reuse detected – session revoked. Please log in again.",
+        )
 
     plain_new, hash_new = generate_refresh_token()
     new_rt = RefreshToken(
@@ -242,9 +264,18 @@ async def refresh_tokens(
         ip_address=request.client.host if request.client else None,
     )
     db.add(new_rt)
-    await db.flush()
-    rt.replaced_by_token_id = new_rt.id
-    await db.commit()
+    try:
+        await db.flush()
+        rt.replaced_by_token_id = new_rt.id
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        await _revoke_family(rt.family_id, db)
+        _clear_auth_cookies(response)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token rotation conflict – session revoked. Please log in again.",
+        )
 
     # Fetch user
     user_result = await db.execute(select(User).where(User.id == rt.user_id))

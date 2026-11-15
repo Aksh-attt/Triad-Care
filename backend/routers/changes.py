@@ -44,6 +44,18 @@ async def create_change(
     # Any member of the care circle can propose changes
     await verify_profile_access(profile_id, current_user, db)
 
+    # Cross-profile ownership validation: Medication must belong to this patient profile
+    if body.medication_id is not None:
+        med_res = await db.execute(select(Medication).where(Medication.id == body.medication_id))
+        med = med_res.scalars().first()
+        if not med:
+            raise HTTPException(status_code=404, detail="Medication not found")
+        if med.profile_id != profile_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Medication does not belong to this patient profile",
+            )
+
     data = body.model_dump()
     # Eliminate client-controlled identity: set strictly from authenticated user
     data["requested_by_user_id"] = current_user.id
@@ -108,6 +120,16 @@ async def review_change(
     # Eliminate client-controlled identity: set strictly from authenticated user
     req.reviewed_by_user_id = current_user.id
     req.reviewed_at = datetime.datetime.now()
+
+    # If approved, verify medication ownership again before applying change
+    if body.status == "approved" and req.medication_id is not None:
+        m_res = await db.execute(select(Medication).where(Medication.id == req.medication_id))
+        med = m_res.scalars().first()
+        if not med or med.profile_id != req.profile_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Security violation: Medication does not belong to this patient profile",
+            )
 
     # If approved, apply change to medication
     if body.status == "approved" and req.proposed_details:

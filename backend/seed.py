@@ -31,11 +31,12 @@ async def seed_database(db: AsyncSession):
     db.add_all(users)
     await db.flush()
 
-    # Patient Profile
+    # Patient Profile – explicitly marked as is_demo=True for demo isolation
     profile = PatientProfile(
         id=1,
         name="Meera Sharma",
         age=72,
+        is_demo=True,
         medical_conditions=["Type 2 Diabetes", "Hypertension", "Mild Arthritis"],
         allergies=["Penicillin"],
         primary_doctor="Dr. Priya Nair",

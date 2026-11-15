@@ -140,27 +140,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const loginWithUser = async (user: User, profileId: number) => {
-    dispatch({ type: 'SET_LOADING', payload: true });
-    try {
-      // Find role or default to passcode for demo persona
-      const passcodeMap: Record<string, string> = {
-        'Meera Sharma': '1111',
-        'Riya Patel': '2222',
-        'Arjun Sharma': '3333',
-      };
-      const passcode = passcodeMap[user.name];
-      if (passcode) {
-        await login(passcode);
-      } else {
-        const profile = await getPatient(profileId);
-        dispatch({ type: 'LOGIN_SUCCESS', payload: { user, profileId, profile } });
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Login failed';
-      dispatch({ type: 'SET_ERROR', payload: msg });
-      throw err;
-    }
+  const loginWithUser = async (user: User, _profileId?: number) => {
+    // Authenticate through the backend demo-login endpoint (no hardcoded PINs or unauthenticated client state)
+    return demoLogin(user.role);
   };
 
   const logout = async () => {

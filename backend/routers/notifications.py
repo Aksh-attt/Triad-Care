@@ -20,9 +20,13 @@ async def list_notifications(
     db: AsyncSession = Depends(get_db),
 ):
     await verify_profile_access(profile_id, current_user, db)
+    # Notification privacy: Shared notifications (user_id IS NULL) + user's private notifications
     result = await db.execute(
         select(Notification)
-        .where(Notification.profile_id == profile_id)
+        .where(
+            Notification.profile_id == profile_id,
+            (Notification.user_id == None) | (Notification.user_id == current_user.id),  # noqa: E711
+        )
         .order_by(Notification.created_at.desc())
     )
     return result.scalars().all()
@@ -42,6 +46,14 @@ async def mark_read(
     notif = result.scalars().first()
     if not notif:
         raise HTTPException(status_code=404, detail="Notification not found")
+
+    # Notification privacy: Only the intended recipient can mark a private notification as read
+    if notif.user_id is not None and notif.user_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden: Cannot mark another member's private notification as read",
+        )
+
     notif.is_read = True
     await db.commit()
     await db.refresh(notif)
@@ -55,10 +67,12 @@ async def mark_all_read(
     db: AsyncSession = Depends(get_db),
 ):
     await verify_profile_access(profile_id, current_user, db)
+    # Notification privacy: Mark-all-read only touches shared notifications and current user's notifications
     result = await db.execute(
         select(Notification).where(
             Notification.profile_id == profile_id,
             Notification.is_read == False,
+            (Notification.user_id == None) | (Notification.user_id == current_user.id),  # noqa: E711
         )
     )
     notifications = result.scalars().all()

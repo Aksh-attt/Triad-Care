@@ -21,12 +21,41 @@ from argon2.exceptions import VerifyMismatchError, VerificationError, InvalidHas
 # ---------------------------------------------------------------------------
 # Configuration (read from environment; must be set before production use)
 # ---------------------------------------------------------------------------
-SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "CHANGE_ME_IN_PRODUCTION_min32chars!!")
+DEFAULT_INSECURE_SECRET: str = "CHANGE_ME_IN_PRODUCTION_min32chars!!"
+DEV_FALLBACK_SECRET: str = "triad-care-dev-secret-key-32chars-minimum-entropy-ok!!"
+SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", DEV_FALLBACK_SECRET)
 ALGORITHM: str = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
 REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 ISSUER: str = "triadcare"
 AUDIENCE: str = "triadcare-api"
+
+
+def validate_jwt_configuration(secret: Optional[str] = None) -> None:
+    """Validate that JWT secret is present, not a default placeholder, and >= 32 chars.
+
+    Raises RuntimeError on invalid configuration to fail application startup safely.
+    """
+    s = secret if secret is not None else os.getenv("JWT_SECRET_KEY")
+    if not s or not s.strip():
+        raise RuntimeError("JWT configuration failure: JWT_SECRET_KEY is missing or empty.")
+
+    insecure_placeholders = {
+        DEFAULT_INSECURE_SECRET.lower(),
+        "secret",
+        "changeme",
+        "default",
+        "password",
+        "12345678",
+        "jwt_secret_key",
+    }
+    if s.lower().strip() in insecure_placeholders:
+        raise RuntimeError("JWT configuration failure: Insecure placeholder secret detected.")
+
+    if len(s) < 32:
+        raise RuntimeError(
+            f"JWT configuration failure: JWT_SECRET_KEY must be at least 32 characters (got {len(s)})."
+        )
 
 # ---------------------------------------------------------------------------
 # Argon2id password hasher – parameters approved by SECURITY_AUDIT.md

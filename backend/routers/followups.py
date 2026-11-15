@@ -68,6 +68,14 @@ async def list_active_followups(
 ALLOWED_ACTIONS = {"calling", "going_to_check", "unavailable"}
 ALLOWED_STATUSES = {"unassigned", "accepted", "in_progress", "resolved", "reassigned"}
 
+VALID_TRANSITIONS = {
+    "unassigned": {"accepted", "reassigned"},
+    "accepted": {"in_progress", "resolved", "reassigned"},
+    "in_progress": {"resolved", "reassigned"},
+    "reassigned": {"accepted", "in_progress", "resolved"},
+    "resolved": set(),  # Terminal state: cannot transition once resolved
+}
+
 
 @router.post("/claim", response_model=FollowupOut)
 async def claim_followup(
@@ -174,10 +182,23 @@ async def update_followup(
             detail="Forbidden: You are not the caregiver assigned to this follow-up",
         )
 
-    for field, value in body.model_dump(exclude_unset=True).items():
+    # State transition enforcement
+    if body.status and body.status != followup.status:
+        allowed_next = VALID_TRANSITIONS.get(followup.status, set())
+        if body.status not in allowed_next:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid state transition: Cannot transition from '{followup.status}' to '{body.status}'",
+            )
+
+    update_data = body.model_dump(exclude_unset=True)
+    update_data.pop("resolved_at", None)  # Strictly reject or ignore client-supplied resolved_at
+
+    for field, value in update_data.items():
         setattr(followup, field, value)
 
-    if body.status == "resolved" and not followup.resolved_at:
+    # Resolution timestamps generated strictly on the server
+    if body.status == "resolved":
         followup.resolved_at = datetime.datetime.now()
 
     await db.commit()
